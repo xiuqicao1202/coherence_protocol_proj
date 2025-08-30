@@ -1,71 +1,38 @@
-# Consistency Scoring System
+# 一致性评分系统 - 项目总结
 
-## Environment Setup
+## 1. 目的
 
-### 1. Create conda environment
+该系统目标是早期识别操作员的心理压力，使用多传感器的数据进行实时心理压力评估，通过整合心率变异性、聊天情绪分析和任务执行效率数据，每10秒为操作员生成综合健康评分，从而判断是否需要进行干预。
+
+## 2. 方法
+
+**使用方法：**
 ```bash
-# Create Python 3.9 environment
-conda create -n proj python=3.9 -y
-
-# Activate environment
-conda activate proj
-```
-
-### 2. Install dependencies
-```bash
-# Or use pip
 pip install -r requirements.txt
 ```
-
-## How to Run (≤5 commands)
-
-### 1. Activate environment
-```bash
-conda activate proj
-```
-
-### 2. Run script
 ```bash
 python3 all_en.py
 ```
+输出在all.csv
 
-### 3. View results
-```bash
-# Output files
-cat all.csv
-cat all.log
-```
+**数据输入：**
+- 心率数据：包含时间戳、操作员ID和心率值；见1input.csv
+- 聊天数据：包含时间戳、操作员ID和消息内容；见2input.csv
+- 任务数据：包含时间戳、操作员ID、事件类型和任务ID；见3input.csv
 
-## Scoring Design Overview
+**评分计算：**
+三个分数均输出0-100分数（0代表心理压力最大，100代表最小），进行归一化到均值为50，标准差为20之后裁剪到[0,100]
+- **Score1 (34%)**：基于心率变异性的RMSSD指标和心率z分数异常检测
+- **Score2 (33%)**：通过关键词分析（暗示积极心情的单词和暗示消极心情的单词比例）和动量平滑，评估聊天用词反映出的心理压力
+- **Score3 (33%)**：基于任务完成率和最近时间完成任务量数量，同时使用动量平滑，评估工作执行效率
 
-### Three Scoring Dimensions:
-- **score1 (Heart Rate Health)**: Based on HRV (RMSSD) + heart rate z-score penalty
-- **score2 (Chat Positivity)**: Keyword analysis + momentum smoothing
-- **score3 (Task Health)**: Completion rate + task volume near balance line
 
-### Weight Distribution:
-- score1: 34%
-- score2: 33% 
-- score3: 33%
+**输出结果：**
+- 每10秒生成一次评分，包含三项子分数和加权总分
+- 当总分明显低于均值时，自动生成问题诊断，说明明显低的单项分数
 
-## Baseline and Anomaly Explanation
+## 3. 下一步行动
 
-### Normal Baseline:
-- Overall score > 50 points
-- Each individual score > 50 points
-
-### Example Timestamps:
-see all.csv 'comments'
-
-### future work
-Get more data
-Training a more complex neural network to analyze each person's text output, so as to understand their mood at the time.
-
-## Input File Requirements
-- `1input.csv`: Heart rate data (timestamp, operator_id, heart_rate_bpm)
-- `2input.csv`: Chat data (timestamp, operator_id, message)  
-- `3input.csv`: Task data (timestamp, operator_id, event, task_id)
-
-## Output Files
-- `all.csv`: Comprehensive scoring results
-- `all.log`: Runtime logs
+1. **参数优化**：收集更多真实操作场景数据，验证评分算法的准确性和敏感性，优化关键词词典和阈值参数
+2. **模型升级**：对于刚刚开始的时刻以及特殊特点的人设计与常规不同的评判标准与阈值，例如对于部分人采用不一样的心跳变化率
+3. **系统集成**：将评分系统集成到现有工作流程中，建立实时预警机制
