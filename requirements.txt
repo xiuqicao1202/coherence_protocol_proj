@@ -1,0 +1,25 @@
+# Python环境依赖包列表
+# 用于运行 all/all_en.py 脚本
+
+# 核心数据处理库
+pandas>=2.0.0
+numpy>=1.20.0
+
+# 时间处理
+python-dateutil>=2.8.0
+
+# 系统相关（通常Python内置）
+pathlib
+typing
+datetime
+sys
+
+# 可选但推荐的包
+# matplotlib>=3.0.0  # 如果需要可视化
+# seaborn>=0.11.0    # 如果需要统计图表
+
+# 安装命令：
+# pip install -r requirements.txt
+
+# 或者使用conda：
+# conda install pandas numpy python-dateutil
