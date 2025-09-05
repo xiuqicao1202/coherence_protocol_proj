@@ -1,38 +1,74 @@
-# 一致性评分系统 - 项目总结
+# Consistency Scoring System - Project Summary
 
-## 1. 目的
+## 1. Purpose
 
-该系统目标是早期识别操作员的心理压力，使用多传感器的数据进行实时心理压力评估，通过整合心率变异性、聊天情绪分析和任务执行效率数据，每10秒为操作员生成综合健康评分，从而判断是否需要进行干预。
+This system aims to early identify operator psychological stress by using multi-sensor data for real-time psychological stress assessment. It integrates heart rate variability, chat sentiment analysis, and task execution efficiency data to generate comprehensive health scores for operators every 10 seconds, thereby determining whether intervention is needed.
 
-## 2. 方法
+## 2. Methodology
 
-**使用方法：**
+**Usage:**
 ```bash
 pip install -r requirements.txt
 ```
 ```bash
 python3 all_en.py
 ```
-输出在all.csv
+Output in all.csv
 
-**数据输入：**
-- 心率数据：包含时间戳、操作员ID和心率值；见1input.csv
-- 聊天数据：包含时间戳、操作员ID和消息内容；见2input.csv
-- 任务数据：包含时间戳、操作员ID、事件类型和任务ID；见3input.csv
+**Data Input:**
+- Heart rate data: Contains timestamp, operator ID, and heart rate values; see 1input.csv
+- Chat data: Contains timestamp, operator ID, and message content; see 2input.csv
+- Task data: Contains timestamp, operator ID, event type, and task ID; see 3input.csv
 
-**评分计算：**
-三个分数均输出0-100分数（0代表心理压力最大，100代表最小），进行归一化到均值为50，标准差为20之后裁剪到[0,100]
-- **Score1 (34%)**：基于心率变异性的RMSSD指标和心率z分数异常检测
-- **Score2 (33%)**：通过关键词分析（暗示积极心情的单词和暗示消极心情的单词比例）和动量平滑，评估聊天用词反映出的心理压力
-- **Score3 (33%)**：基于任务完成率和最近时间完成任务量数量，同时使用动量平滑，评估工作执行效率
+**Scoring Calculation:**
+All three scores output 0-100 points (0 represents maximum psychological stress, 100 represents minimum), normalized to mean 50, standard deviation 20, then clipped to [0,100]
+- **Score1 (34%)**: Based on heart rate variability RMSSD metrics and heart rate z-score anomaly detection
+- **Score2 (33%)**: Evaluates psychological stress reflected in chat language through intelligent keyword analysis using a configurable dictionary system. The system includes:
+  - **Dynamic keyword matching** with 4 categories: confidence (+2), hesitation (-2), escalation (-3), and repair (+1)
+  - **Smart "not" pattern recognition** that automatically converts confidence words to hesitation when negated (e.g., "not sure", "not certain")
+  - **Configurable scoring** through `dictionary_config.yaml` with 229+ keywords across all categories
+  - **Momentum smoothing** with exponential decay to maintain score continuity
+- **Score3 (33%)**: Evaluates work execution efficiency based on task completion rate and recent task completion volume, with momentum smoothing
 
+**Output Results:**
+- Generates scores every 10 seconds, including three sub-scores and weighted total score
+- When total score is significantly below mean, automatically generates problem diagnosis explaining which individual scores are notably low
 
-**输出结果：**
-- 每10秒生成一次评分，包含三项子分数和加权总分
-- 当总分明显低于均值时，自动生成问题诊断，说明明显低的单项分数
+## 3. Technical Features
 
-## 3. 下一步行动
+### Dictionary-Based Chat Analysis (Score2)
 
-1. **参数优化**：收集更多真实操作场景数据，验证评分算法的准确性和敏感性，优化关键词词典和阈值参数
-2. **模型升级**：对于刚刚开始的时刻以及特殊特点的人设计与常规不同的评判标准与阈值，例如对于部分人采用不一样的心跳变化率
-3. **系统集成**：将评分系统集成到现有工作流程中，建立实时预警机制
+The system uses an advanced keyword dictionary module (`dictionary.py`) for intelligent chat sentiment analysis:
+
+**Keyword Categories:**
+- **Confidence** (60 keywords): "sure", "definitely", "ready", "all good" → +2 score delta
+- **Hesitation** (42 keywords): "maybe", "think", "not sure" → -2 score delta  
+- **Escalation** (44 keywords): "urgent", "critical", "must fix" → -3 score delta
+- **Repair** (83 keywords): "sorry", "help", "fix", "support" → +1 score delta
+
+**Advanced Features:**
+- **Not Pattern Recognition**: Automatically detects "not + adjective" patterns and converts confidence words to hesitation
+- **Word Boundary Matching**: Uses regex `\b` patterns to ensure exact word matches
+- **Case Insensitive**: Supports both uppercase and lowercase matching
+- **Dynamic Configuration**: All keywords and scores configurable via `dictionary_config.yaml`
+- **Real-time Updates**: Keywords can be added/modified without code changes
+
+**Scoring Formula:**
+```
+Base Score: 60
+Final Score = Base + (score_delta × 10) + (keyword_count × 2)
+Clamped to: [0, 100]
+```
+
+**Example Scoring:**
+- `"looks fine"` → Confidence category → Score: 82.0
+- `"not sure"` → Hesitation category → Score: 44.0  
+- `"urgent"` → Escalation category → Score: 32.0
+- `"all good"` → Confidence category → Score: 82.0
+- `"fail!"` → No match → Score: 60.0 (default)
+
+## 4. Next Steps
+
+1. **Parameter Optimization**: Collect more real operational scenario data to validate scoring algorithm accuracy and sensitivity, optimize keyword dictionary and threshold parameters
+2. **Model Upgrade**: Design different evaluation standards and thresholds for initial moments and individuals with special characteristics, such as using different heart rate variability rates for certain people
+3. **System Integration**: Integrate the scoring system into existing workflows and establish real-time warning mechanisms

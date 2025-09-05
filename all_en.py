@@ -17,7 +17,6 @@ then check if any of the three scores < its "class historical mean - 1σ" (all p
 If so, give a reason and a little context in comments.
 """
 
-
 from pathlib import Path
 from typing import List, Tuple
 import pandas as pd
@@ -25,6 +24,7 @@ import numpy as np
 from datetime import timezone
 
 import sys
+from dictionary import DictionaryScorer
 
 class TeeLogger:
     """
@@ -116,8 +116,6 @@ def assign_bins(df: pd.DataFrame, bin_seconds: int = 10) -> pd.DataFrame:
     df["bin_ts"] = df["timestamp"].dt.floor(f"{bin_seconds}s")
     return df
 
-
-
 def compute_scores(hr: pd.DataFrame, chat: pd.DataFrame, tasks: pd.DataFrame,
                    timeline: List[pd.Timestamp], ops: List[str],
                    bin_seconds: int = 10, weights: Tuple[float, float, float] = (0.34, 0.33, 0.33)) -> pd.DataFrame:
@@ -136,14 +134,12 @@ def compute_scores(hr: pd.DataFrame, chat: pd.DataFrame, tasks: pd.DataFrame,
     # Aggregate chat data by bin_ts and operator_id, concatenate all messages in each bin (" | " separated), only include data at or before bin_ts
     # For example, bin 2025-08-20 10:00:10+00:00 only includes original data with timestamp <= 10:00:10
     # So each bin only reflects content up to that time, not after
-    # Fix chat aggregation
     chat_agg = []
     chat_by_op = chat.groupby("operator_id")
     for bin_ts in timeline:
         for op in ops:
             if op in chat_by_op.groups:
                 op_chat = chat_by_op.get_group(op)
-                # Fix: correct time range filter
                 start_time = bin_ts - pd.Timedelta(seconds=10)
                 end_time = bin_ts
                 mask = (op_chat["timestamp"] > start_time) & (op_chat["timestamp"] <= end_time)
@@ -154,8 +150,6 @@ def compute_scores(hr: pd.DataFrame, chat: pd.DataFrame, tasks: pd.DataFrame,
             chat_agg.append({"bin_ts": bin_ts, "operator_id": op, "message": msg_str})
     chat_agg = pd.DataFrame(chat_agg)
     print('chat_agg', chat_agg)
-            
-                
 
     # Task aggregation: concatenate event:task_id per bin, same as chat_agg, only include events up to that time
     task_agg = []
@@ -229,44 +223,52 @@ def compute_scores(hr: pd.DataFrame, chat: pd.DataFrame, tasks: pd.DataFrame,
     df["score1"] = (df["hrv_score"] - df["hr_penalty"]).clip(0, 100)
 
     # ---- score2: Chat positivity/consistency ----
-    # Keyword dictionary
-    # About 50 negative and positive keywords for more detailed chat sentiment evaluation
-    stress_words = {
-        "error", "fail", "failed", "issue", "stuck", "delay", "urgent", "can't", "cannot", "wtf", "broken", "retry", "oops", "panic",
-        "problem", "trouble", "difficult", "hard", "slow", "blocked", "miss", "lost", "down", "crash", "freeze", "hang", "stop",
-        "unavailable", "unresponsive", "disconnect", "timeout", "overload", "overheat", "warning", "alert", "critical", "fatal",
-        "danger", "risk", "unstable", "unexpected", "abnormal", "corrupt", "invalid", "denied", "refused", "rejected", "conflict",
-        "collision", "late", "postpone", "stress", "tired", "exhausted", "annoy", "frustrate", "angry", "upset", "disappointed",
-        "sad", "complain", "regret", "sorry", "pain", "hurt", "worry", "afraid", "fear", "scared", "terrified", "confuse", "mess",
-        "chaos", "disaster", "unlucky", "unfortunate", "unable", "incomplete", "unhappy", "hopeless", "helpless", "useless",
-        "pointless", "meaningless", "worthless", "bug", "glitch", "lag", "dead", "jam", "sucks", "hate", "dislike", "disgust"
-    }
-    positive_words = {
-        "ok", "done", "ready", "roger", "nice", "great", "thanks", "thank you", "proceed", "confirm", "confirmed", "noted", "on it",
-        "looks fine", "received", "good", "well done", "perfect", "excellent", "awesome", "fine", "clear", "all good", "smooth",
-        "success", "successful", "fixed", "solved", "resolved", "stable", "fast", "faster", "quick", "quickly", "improve", "improved",
-        "improving", "improvement", "safe", "safely", "safety", "reliable", "reliably", "trust", "trustworthy", "cooperate",
-        "cooperation", "help", "helpful", "productive", "motivated", "enthusiastic", "engaged", "committed", "willing", "coordinated",
-        "organized", "structured", "planned", "prepared", "ready", "available", "responsive", "usable", "workable", "manageable",
-        "controllable", "predictable", "support", "supported", "supporting", "supportive", "cheer", "cheers", "happy", "happiness",
-        "enjoy", "enjoyed", "enjoying", "enjoys", "like", "liked", "liking", "likes", "love", "loved", "loving", "loves"
-    }
-    df["message_lc"] = df["message"].astype(str).str.lower()
-
+    # Use dictionary module for keyword scoring
+    print("Initializing keyword dictionary scorer...")
+    dictionary_scorer = DictionaryScorer()
+    
+    # Show available category info
+    print("Available keyword categories:")
+    for category in dictionary_scorer.get_categories():
+        info = dictionary_scorer.get_category_info(category)
+        print(f"  - {category}: score delta {info['score_delta']}, keyword count {len(info['keywords'])}")
+    print()
+    
     def chat_inst_score(msg: str) -> float:
         """
-        Single-bin chat score: base 60, +8 for each positive word, -10 for each negative word, clipped 0-100
+        Use dictionary module for single chat scoring.
+        Base score 60, adjusted by keyword match results.
         """
         if msg is None or msg == "nan":
             return np.nan
-        score = 60.0
-        s_cnt = sum(1 for w in stress_words if w in msg)
-        p_cnt = sum(1 for w in positive_words if w in msg)
-        score += 8.0 * p_cnt
-        score -= 10.0 * s_cnt
+        
+        # Use dictionary module to score
+        result = dictionary_scorer.score_text(msg)
+        score_delta = result.get('score_delta', 0)
+        matched_keywords = result.get('matched_keywords', [])
+        
+        # Base score 60, adjust by score_delta
+        base_score = 60.0
+        score = base_score + score_delta * 10  # Amplify score_delta for more impact
+        
+        # If there are matched keywords, further adjust
+        if matched_keywords:
+            # Fine-tune by number of matches
+            keyword_bonus = len(matched_keywords) * 2
+            score += keyword_bonus
+        
         return float(np.clip(score, 0, 100))
 
-    df["chat_inst"] = df["message_lc"].apply(chat_inst_score)
+    # Demo scoring for some messages
+    print("Keyword scoring demo:")
+    demo_messages = ["fail!", "looks fine", "not sure", "urgent", "all good", "error!", "smooth"]
+    for msg in demo_messages:
+        result = dictionary_scorer.score_text(msg)
+        score = chat_inst_score(msg)
+        print(f"  '{msg}' -> category: {result['category']}, score delta: {result['score_delta']}, final score: {score:.1f}")
+    print()
+    
+    df["chat_inst"] = df["message"].apply(chat_inst_score)
 
     # Momentum smoothing (exponential decay), slowly return to 60 if no message
     df["score2"] = np.nan
@@ -316,10 +318,6 @@ def compute_scores(hr: pd.DataFrame, chat: pd.DataFrame, tasks: pd.DataFrame,
             roll_df["errors_roll"] = errors_roll
             print(f"\nOperator {op} rolling statistics table:")
             print(roll_df.to_string(index=False))
-            # with np.errstate(divide="ignore", invalid="ignore"):
-            #     comp_rate = np.where(starts_roll > 0, completes_roll / starts_roll, 0.5)
-            #     err_rate = np.where(starts_roll > 0, errors_roll / starts_roll, 0.0)
-            # INSERT_YOUR_CODE
             # Calculate accuracy (completion rate) and error rate
             with np.errstate(divide="ignore", invalid="ignore"):
                 # If starts_roll==0, comp_rate default 0.5, err_rate default 0.0
@@ -353,34 +351,6 @@ def compute_scores(hr: pd.DataFrame, chat: pd.DataFrame, tasks: pd.DataFrame,
                 out_vals.append(max(0.0, min(100.0, prev)))
             df.loc[mask, "score3"] = out_vals
 
-
-            # # Calculate average cycle time
-            # start_times = {}
-            # durations = []
-            # for row in op_events.itertuples(index=False):
-            #     if row.event == "task start":
-            #         start_times[row.task_id] = row.timestamp
-            #     elif row.event == "task complete" and row.task_id in start_times:
-            #         durations.append((row.timestamp - start_times[row.task_id]).total_seconds())
-            # avg_ct = float(np.mean(durations)) if durations else np.nan
-            # base = 100.0 * comp_rate - 80.0 * err_rate
-            # print('avg_ct', avg_ct)
-            # # Cycle time penalty
-            # if not np.isnan(avg_ct):
-            #     ct_penalty = np.interp(avg_ct, [15.0, 60.0, 120.0], [0.0, 15.0, 30.0])
-            # else:
-            #     ct_penalty = 0.0
-            # print('ct_penalty', ct_penalty)
-            # inst = np.clip(base - ct_penalty, 0, 100)
-            # print('inst', inst)
-            # # Momentum smoothing
-            # out_vals = []
-            # prev = 70.0
-            # alpha = 0.4
-            # for val in inst:
-            #     prev = (1 - alpha) * prev + alpha * val
-            #     out_vals.append(max(0.0, min(100.0, prev)))
-            # df.loc[mask, "score3"] = out_vals
     else:
         # Default 60 if no task data
         df["score3"] = 60.0
@@ -464,8 +434,6 @@ def compute_scores(hr: pd.DataFrame, chat: pd.DataFrame, tasks: pd.DataFrame,
     # Remove +00:00 at the end of timestamp
     if "timestamp" in out.columns:
         out["timestamp"] = out["timestamp"].astype(str).str.replace(r"\+00:00$", "", regex=True)
-
-    
 
     # Ensure output has at most 2 decimal places
     float_cols = ["heart_rate_bpm", "score1", "score2", "score3", "score_all"]
